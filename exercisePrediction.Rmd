@@ -1,0 +1,138 @@
+---
+title: "Prediction of how well exercise is performed"
+author: "demetr"
+date: "July 17, 2016"
+output: html_document
+---
+
+# Synopsis
+
+In this report we analyze "Weight Lifting Exercises Dataset" dataset in order to form a prediction model which will be able to classify exercise to how well it was performed based on collected metrics.
+
+# Reproducability
+
+All calculations and modifying of data were performed by R and can be reproduced with this report. It assumes that  dataset was divided into two datasets (training and test) named `pml-training.csv` and `pml-training.csv`.
+
+Following command is used to setup environment:
+
+```{r , message = F}
+library(caret)
+library(dplyr)
+library(xtable)
+
+x <- Sys.setlocale("LC_TIME", "C")
+
+set.seed(131313)
+```
+
+
+# Data set
+
+We use dataset from paper [Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/har#dataset). This dataset was divided into two parts by "Practical Machine Learning" course teachers.
+
+```{r , cache = TRUE}
+exerciseTrain <- tbl_df(read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+exerciseTest <- tbl_df(read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+```
+
+Both datasets contains data about numeric metrics collected during exercise, timestamps, names of persons and other information. Also dataset named "training" has variable "classe" which shows desired classification.
+
+Training dataset has `r dim(exerciseTrain)[1]` observations while test dataset has only `r dim(exerciseTest)[1]`. Also training dataset has no data for several variables in most observed cases, e.g. variable `var_total_accel_belt` has `r sum(is.na(exerciseTrain$var_total_accel_belt))` empty observations.
+
+It appears that dataset contains several timeseries observations, which is marked by `num_window` variable and belt metrics are collected only at the end of this interval.
+
+## Data processing
+
+We decide to modify original dataset in following way:
+
+* Remove all timestamp and window information and treat all observation as independent.
+* Remove all variables that are set only for end period.
+* Remove information about who performed exercise.
+* Divide training dataset into 3 dataset randomly: train dataset (60%), cross validation dataset (20%) and test dataset (20%).
+
+```{r , cache = TRUE}
+mapping <- sample(c(1, 2, 3), dim(exerciseTrain)[1], replace = T, prob = c(0.6, 0.2, 0.2))
+
+exerciseTrain <- exerciseTrain %>% dplyr::select(
+    roll_belt:total_accel_belt,
+    gyros_belt_x:total_accel_arm,
+    gyros_arm_x:magnet_arm_z,
+    roll_dumbbell:yaw_dumbbell,
+    gyros_dumbbell_x:yaw_forearm,
+    gyros_forearm_x:magnet_forearm_z,
+    classe)
+
+trainDS <- exerciseTrain %>%
+  filter(mapping[row_number()] == 1)
+validationDS <- exerciseTrain %>%
+  filter(mapping[row_number()] == 2)
+testDS <- exerciseTrain %>%
+  filter(mapping[row_number()] == 3)
+```
+
+# Models
+
+We fit machine learning models agains all remaining variables. We fit random forest (“rf”) and linear discriminant analysis (“lda”) models.
+
+```{r, cache = TRUE}
+fitRf <- train(classe ~ ., data = trainDS, method = "rf", ntree = 10)
+fitLda <- train(classe ~ ., data = trainDS, method = "lda")
+```
+
+To check effective accuracy we use validation dataset:
+
+```{r, message = F, results="asis"}
+validationTable <- rbind(
+  confusionMatrix(predict(fitRf, validationDS), validationDS$classe)$overall, 
+  confusionMatrix(predict(fitLda, validationDS), validationDS$classe)$overall)
+
+rownames(validationTable) <- c("Random forest",
+                               "Linear discriminant analysis")
+
+print(xtable(validationTable), type = "html")
+```
+
+Based on validation results we fit combined model:
+
+```{r, cache = TRUE}
+combinedModelMatrix <- data.frame(
+  predict(fitRf, validationDS),
+  predict(fitLda, validationDS),
+  validationDS$classe
+)
+colnames(combinedModelMatrix) <- c("rf", "lda", "classe")
+fitComb <- train(classe ~ ., data = combinedModelMatrix)
+```
+
+We examine resulted accuracy on test dataset:
+
+```{r, cache = TRUE}
+combinedPredictMatrix <- data.frame(
+  predict(fitRf, testDS),
+  predict(fitLda, testDS)
+)
+colnames(combinedPredictMatrix) <- c("rf", "lda")
+
+combinedPredict <- predict(fitComb, combinedPredictMatrix)
+```
+
+Resulted estimated accuracy for this prediction is:
+```{r}
+confusionMatrix(combinedPredict, testDS$classe)
+```
+
+## Estimation
+
+We try to predict manner of exercise in `exerciseTest` dataset.
+
+```{r}
+combinedPredictMatrixTest <- data.frame(
+  predict(fitRf, exerciseTest),
+  predict(fitLda, exerciseTest)
+)
+colnames(combinedPredictMatrixTest) <- c("rf", "lda")
+
+combinedPredictTest <- predict(fitComb, combinedPredictMatrixTest)
+
+print(combinedPredictTest)
+```

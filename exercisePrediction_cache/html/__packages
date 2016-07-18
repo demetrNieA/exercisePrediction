@@ -1,0 +1,10 @@
+base
+dplyr
+ggplot2
+xtable
+knitr
+pander
+lattice
+caret
+randomForest
+MASS
